@@ -27,13 +27,9 @@ use std::io::Read;
 pub struct M68k {
     a: [u32; 8],
     d: [u32; 8],
-    pc: u32,
-    x: bool,
-    n: bool,
-    z: bool,
-    v: bool,
-    c: bool,
-    s: bool,
+    pc: u32, //program counter
+	sr: u16, //status register - bits are:
+//0: carry, 1: overflow, 2: zero, 3: negative, 4: extend, 5-14: ???, 15: trace enabled
     op: u16,
     prog: Vec<u8>,
     memory: Mem,
@@ -45,12 +41,7 @@ impl M68k {
             a: [0 as u32; 8],
             d: [0 as u32; 8],
             pc: 0 as u32,
-            x: false,
-            n: false,
-            z: false,
-            v: false,
-            c: false,
-            s: false,
+			sr: 0 as u16,
             op: 0 as u16,
             prog: Vec::new(),
             memory: Mem::new(),
@@ -78,167 +69,93 @@ impl M68k {
     //match blocks are commented with the mnemonic being decoded.
     pub fn run(&mut self) -> bool {
         self.op = self.next_op();
-        println!("{}", self.pc);
-        debug_print(self);
-        let temp = self.op;
-        if temp == 0 {
+        if self.op == 0 {//NOP
             return true;
         }
-        match (temp.rotate_left(4) & 0b1111) {
-            0b0000 => {
-                //beginning of IMMEDIATE OPS block
-                match (temp.rotate_left(8) & 0b1111) {
-                    0b0000 => {
-                        self.ori();
-                    } // ori
-                    0b0010 => {
-                        self.andi();
-                    } //andi
-                    0b0100 => {
-                        self.subi();
-                    } //subi
-                    0b0110 => {
-                        self.addi();
-                    } //addi
-                    0b1010 => {
-                        self.eori();
-                    } //eori
-                    0b1100 => {
-                        self.cmpi();
-                    } //cmpi
-                    _ => {}
-                }
-            }
-            0b0001 => {
-                self.mov();
-            } //move b
-            0b0010 => {
-                self.mov();
-            } //move l
-            0b0011 => {
-                self.mov();
-            } //move w
-            0b0100 => match temp {
-                0x4afc => {
-                    self.illegal();
-                    return false;
-                }
-                0x4e71 => {} //nop
-                0x4e72 => {
-                    self.stop();
-                    return false;
-                }
-                0x4e73 => {
-                    self.rte();
-                }
-                0x4e75 => {
-                    self.rts();
-                }
-                0x4e76 => {
-                    self.trapv();
-                }
-                0x4e77 => {
-                    self.rtr();
-                }
-                //REQ BITS: 9
-                temp if (temp & 0b111111111000) == 0b111001010000 => {
-                    self.link();
-                }
-                temp if (temp & 0b111111111000) == 0b111001011000 => {
-                    self.unlk();
-                }
-                temp if (temp & 0b111111111000) == 0b100001000000 => {
-                    self.swap();
-                }
-                //REQ BITS: 8
-                temp if (temp & 0b111111110000) == 0b111001000000 => {
-                    self.trap();
-                }
-                //REQ BITS: 6
-                temp if (temp & 0b111111000000) == 0b111011000000 => {
-                    self.jmp();
-                }
-                temp if (temp & 0b111111000000) == 0b111010000000 => {
-                    self.jsr();
-                }
-                temp if (temp & 0b111111000000) == 0b111001000000 => {
-                    self.tas();
-                }
-                temp if (temp & 0b111111000000) == 0b100001000000 => {
-                    self.pea();
-                }
-                temp if (temp & 0b111000111000) == 0b100000000000 => {
-                    self.ext();
-                }
-                //REQ BITS: 4
-                temp if (temp & 0b111100000000) == 0b101000000000 => {
-                    self.tst();
-                }
-                temp if (temp & 0b111100000000) == 0b011000000000 => {
-                    self.not();
-                }
-                temp if (temp & 0b111100000000) == 0b010000000000 => {
-                    self.neg();
-                }
-                temp if (temp & 0b111100000000) == 0b001000000000 => {
-                    self.clr();
-                }
-                _ => self.lea(),
-            },
-            0b0101 => match temp {
-                temp if (temp & 0b11000000) == 0b11000000 => {
-                    self.scc();
-                }
-                temp if (temp & 0b100000000) == 0b100000000 => {
-                    self.subq();
-                }
-                _ => {
-                    self.addq();
-                }
-            },
-            0b0110 => {
-                self.bcc();
-            }
-            0b0111 => {
-                self.d[((temp >> 9) & 0b111) as usize] = (temp & 0b11111111).into();
-            }
-            0b1000 => {
-                self.div();
-            }
-            0b1001 => {
-                self.suba();
-            }
-            0b1100 => {
-                if (temp & 0b11111111) == 0b11111100 {
-                    self.mul();
-                } else {
-                    self.exg();
-                }
-            }
-            0b1101 => {
-                self.adda();
-            }
-            0b1110 => {
-                if (temp & 0b11000) == 0b11000 {
-                    self.rot();
-                } else {
-                    self.ls();
-                }
-            }
-            _ => {
-                println!("uncaptured address or data! previous ops:");
-                println!(
-                    "{:b}{:b}",
-                    self.prog[(self.pc - 4) as usize],
-                    self.prog[(self.pc - 3) as usize]
-                );
-                println!(
-                    "{:b}{:b}",
-                    self.prog[(self.pc - 2) as usize],
-                    self.prog[(self.pc - 1) as usize]
-                );
-            }
-        }
+		match ((self.op >> 12) & 0xf {
+			0 => {
+				//immediate operation
+				match (self.op >> 8) & 0xf {
+					0 => self.ori(),
+					0b0010 => self.andi(),
+					0b0100 => self.subi(),
+					0b0110 => self.addi(),
+					0b1010 => self.eori(),
+					0b1100 => self.cmpi(),
+					0b1000 => {
+						match (self.op >> 6) & 0b11 {//dest for these is the Z bit of the SR
+							0 => self.btstz(),
+							1 => self.bchgz(),
+							2 => self.bclrz(),
+							3 => self.bsetz(),
+						}
+					}
+					_ => {//only other immediate ops are the bit operations on a D reg and MOVEP
+						if((self.op >> 3) & 0b100111) == 0b100001 {//movep
+							let reg = ((self.op >> 9) & 0b111) as usize;
+							let areg = (self.op & 0b111) as usize; //what address to use
+							let addr = (self.next_op() as u32) + self.a[areg]; //the displacement to add
+							if self.op & 0b10000000 != 0 {//FROM memory, TO d reg
+								if self.op & 0b1000000 != 0 {//long
+									self.d[reg] = self.memory.read_l(addr);
+								}
+								else{//word
+									self.d[reg] = by_bytes(self.memory.read_w(addr) as u32, self.d[reg], 2);
+								}
+							}
+							else {//FROM d reg, TO memory
+								if self.op & 0b1000000 != 0 {//long
+									self.memory.mem_write(addr, self.d[reg], 4);
+								}
+								else {
+									self.memory.mem_write(addr, self.d[reg], 2);
+								}
+							}
+						} //end of MOVEP block 
+						
+					
+					}
+				}
+			}
+			0b0100 => {
+				//this block contains LOTS of misc operations
+			
+			}
+			0b0110 => {
+				//branches
+			
+			}
+			0b0111 => {
+				//moveq
+				let reg = ((self.op >>9) & 0b111) as usize;
+				self.d[reg] = (self.op & 0xFF) as u32;
+			}
+			0b1000 => {
+				// div, decimal subtraction, bitwise or
+				
+			}
+			0b1001 => {
+				//subtractions
+				
+			}
+			0b1011 => {
+				//exclusive or, comparisons
+			
+			}
+			0b1100 => {
+				//multiplication, extended decimal addition, and
+				
+			}
+			0b1101 => {
+				//addition
+				
+			}
+			0b1110 => {
+				//shifts and rotations
+			}
+		
+		}
+      
         return true;
     }
 
@@ -289,7 +206,7 @@ impl M68k {
                 //ORI with memory
                 let temp2 = self.next_op();
                 self.d[reg] = by_byte(
-                    (temp as u32 | self.memory.readl(temp2 as usize)),
+                    (temp as u32 | self.memory.read_l(temp2 as usize)),
                     self.d[reg],
                     (arg >> 6) & 0b11,
                 );
@@ -318,7 +235,7 @@ impl M68k {
                 //andi with memory
                 let temp2 = self.next_op();
                 self.d[reg] = by_byte(
-                    (temp as u32 & self.memory.readl(temp2 as usize)),
+                    (temp as u32 & self.memory.read_l(temp2 as usize)),
                     self.d[reg],
                     (arg >> 6) & 0b11,
                 );
@@ -343,7 +260,7 @@ impl M68k {
             0b111 => {
                 //subi with memory
                 let temp2 = self.next_op();
-                let mut res = by_byte(self.memory.readl(temp2 as usize), 0, arg >> 6);
+                let mut res = by_byte(self.memory.read_l(temp2 as usize), 0, arg >> 6);
                 res = (self.d[reg] as i32 - res as i32) as u32;
                 self.n = res < 0;
                 self.z = res == 0;
@@ -354,6 +271,139 @@ impl M68k {
             _ => {}
         }
     }
+	
+	fn btstz(&mut self){
+		let bitnum = self.next_op();
+		let reg = self.op & 0b111;
+		match (self.op >> 3) & 0b111 {//finding source
+			0 => {//data register
+				let mask = 2_u32.pow(bitnum % 32);
+				if(self.d[reg] & mask) == 0 {
+					self.sr = self.sr | 0b000000000000000000100;
+				}
+				else {
+					self.sr = self.sr & 0b111111111111111111011;
+				}
+			}
+			1 => {//A register
+				let mask = 2_u32.pow(bitnum % 32);
+				if(self.a[reg] & mask) == 0 {
+					self.sr = self.sr | 0b000000000000000000100;
+				}
+				else {
+					self.sr = self.sr & 0b111111111111111111011;
+				}
+			}
+			2 => {//address from A reg
+				let mask = 2_u8.pow(bitnum % 7);
+				let addr = self.a[reg];
+				let temp = self.memory.read_b(addr);
+				if(temp & mask as u8) == 0 {
+					self.sr = self.sr | 0b000000000000000000100;
+				}
+				else {
+					self.sr = self.sr & 0b111111111111111111011;
+				}
+			}
+			3 => {//A(n) with increment
+				let mask = 2_u8.pow(bitnum % 7);
+				let addr = self.a[reg];
+				let temp = self.memory.read_b(addr);
+				if(temp & mask as u8) == 0 {
+					self.sr = self.sr | 0b000000000000000000100;
+				}
+				else {
+					self.sr = self.sr & 0b111111111111111111011;
+				}
+				self.a[reg] += 1;
+			}
+			4 => {//A(n) with decrement
+				let mask = 2_u8.pow(bitnum % 7);
+				self.a[reg] -= 1;
+				let addr = self.a[reg];
+				let temp = self.memory.read_b(addr);
+				if(temp & mask as u8) == 0 {
+					self.sr = self.sr | 0b000000000000000000100;
+				}
+				else {
+					self.sr = self.sr & 0b111111111111111111011;
+				}
+			}
+			5 =>
+			
+		}
+	}
+	fn bchgz(&mut self){
+		let bitnum = self.next_op() % 32;
+		let mask = 2_u32.pow(bitnum);
+		let reg = self.op & 0b111;
+		match (self.op >> 3) & 0b111 {//finding source
+			0 => {//data register
+				if(self.d[reg] & mask) == 0 {
+					self.sr = self.sr | 0b000000000000000000100;
+				}
+				else {
+					self.sr = self.sr & 0b111111111111111111011;
+				}
+			}
+			1 => {//A register
+				if(self.a[reg] & mask) == 0 {
+					self.sr = self.sr | 0b000000000000000000100;
+				}
+				else {
+					self.sr = self.sr & 0b111111111111111111011;
+				}
+			}
+		}
+	}
+	
+	fn bclrz(&mut self){
+		let bitnum = self.next_op() % 32;
+		let mask = 2_u32.pow(bitnum);
+		let reg = self.op & 0b111;
+		match (self.op >> 3) & 0b111 {//finding source
+			0 => {//data register
+				if(self.d[reg] & mask) == 0 {
+					self.sr = self.sr | 0b000000000000000000100;
+				}
+				else {
+					self.sr = self.sr & 0b111111111111111111011;
+				}
+			}
+			1 => {//A register
+				if(self.a[reg] & mask) == 0 {
+					self.sr = self.sr | 0b000000000000000000100;
+				}
+				else {
+					self.sr = self.sr & 0b111111111111111111011;
+				}
+			}
+		}
+	}
+	
+	fn bsetz(&mut self){
+		let bitnum = self.next_op() % 32;
+		let mask = 2_u32.pow(bitnum);
+		let reg = self.op & 0b111;
+		match (self.op >> 3) & 0b111 {//finding source
+			0 => {//data register
+				if(self.d[reg] & mask) == 0 {
+					self.sr = self.sr | 0b000000000000000000100;
+				}
+				else {
+					self.sr = self.sr & 0b111111111111111111011;
+				}
+			}
+			1 => {//A register
+				if(self.a[reg] & mask) == 0 {
+					self.sr = self.sr | 0b000000000000000000100;
+				}
+				else {
+					self.sr = self.sr & 0b111111111111111111011;
+				}
+			}
+		}
+	}
 
     fn addi(&mut self) {
         let arg = self.op;
@@ -421,7 +471,7 @@ impl M68k {
             }
             0b111 => {
                 let temp2 = self.next_op();
-                let temp3 = self.memory.readl(temp2 as usize) ^ (temp as u32);
+                let temp3 = self.memory.read_l(temp2 as usize) ^ (temp as u32);
                 self.memory.mem_write(temp2 as usize, temp3, 4);
             }
             _ => {}
@@ -430,47 +480,29 @@ impl M68k {
 
     fn cmpi(&mut self) {
         let arg = self.op;
-        let temp = self.next_op(); //this is the immediate
-        let temp2 = self.next_op(); //this is the place in memory to read from, or 0 if we're working on a register
-        let reg: usize = (arg & 0b111) as usize;
-        match (arg >> 3) & 0b111 {
-            0 => {
-                let res = (self.d[reg] as i32 - temp as i32);
-                match arg >> 6 & 0b11 {
-                    0b00 => {
-                        let check = (res & 0xff) as i8;
-                        self.v = res as u32 > 0xff;
-                        self.c = (res & 0x100) != 0;
-                        self.z = (check == 0);
-                        self.n = (check < 0);
-                    }
-                    0b01 => {
-                        let check = (res & 0xffff) as i16;
-                        self.v = res as u32 > 0xffff;
-                        self.c = (res & 0x10000) != 0;
-                        self.z = (check == 0);
-                        self.n = (check < 0);
-                    }
-                    0b10 => {
-                        let check = (self.d[reg] < res as u32) | (temp as u32 > res as u32);
-                        self.x = check;
-                        self.v = check;
-                        self.c = check;
-                        self.z = res == 0;
-                        self.n = res < 0;
-                    }
-                    _ => {}
-                }
-            }
-            0b111 => {
-                println!(
-                    "Should be doing cmpi with memory at {:x} and
-                the immediate number {:x}",
-                    temp2, temp
-                );
-            }
-            _ => {}
-        }
+		let mut mode = 0;
+		let mut temp: u32 = 0;
+		let mut temp2: u32 = 0;
+        match ((arg >> 6) & 0b11) {
+			// finding size of operation - mode is set according to the standard used by other ops
+			0 => { 
+			//byte
+			mode = 0b01;
+			temp = self.next_op() as u32;
+			} 
+			0b01 => {
+			//word
+			mode = 0b11; 
+			temp = self.next_op() as u32;			
+			} 
+			0b10 => {
+			//long
+			mode = 0b10; 
+			temp = self.next_l();
+			} 
+			_ => {}
+		}
+		
     }
 
     fn mov(&mut self) {
@@ -548,9 +580,9 @@ impl M68k {
     }
 
     fn rte(&mut self) {
-        let SR = self.memory.readl(self.a[7] as usize);
+        let SR = self.memory.read_l(self.a[7] as usize);
         self.a[7] -= 4;
-        let PC = self.memory.readl(self.a[7] as usize);
+        let PC = self.memory.read_l(self.a[7] as usize);
         self.a[7] -= 4;
     }
 
@@ -600,14 +632,14 @@ impl M68k {
     }
 
     fn rts(&mut self) {
-        self.pc = self.memory.readl(self.a[7] as usize);
+        self.pc = self.memory.read_l(self.a[7] as usize);
         self.a[7] += 4;
     }
 
     fn unlk(&mut self) {
         let arg = self.op & 0b111;
         self.a[7] = self.a[arg as usize];
-        let temp = self.memory.readw(self.a[arg as usize] as usize) as u32;
+        let temp = self.memory.read_w(self.a[arg as usize] as usize) as u32;
         self.a[arg as usize] = temp;
     }
 
@@ -674,7 +706,7 @@ impl M68k {
 
     fn tas(&mut self) {
         let temp = self.next_op() as usize;
-        if (self.memory.readb(temp) == 0) {
+        if (self.memory.read_b(temp) == 0) {
             self.memory.mem_write(temp, 80, 1);
         }
     }
@@ -803,17 +835,51 @@ impl M68k {
     fn ls(&mut self) {
         println!("ls");
     }
+
+    fn next_l(&mut self, addr: usize) -> u32 {
+        ((self.next_op() as u32) << 16) + (self.next_op() as u32)
+    }
+	
+	fn finder(&mut self, opcode: u16, mode: u32) -> u32{
+		let reg = opcode & 0b111;
+		let src = (opcode >> 3) & 0b111;
+		match src {
+			0 => by_byte(self.d[reg], 0, mode)
+			1 => by_byte(self.a[reg], 0, mode)
+			2 => {
+				let temp = self.a[reg];
+				by_byte(self.memory.read_l(temp), 0, mode)
+			}
+			3 => {
+				let temp = self.a[reg];
+				self.a[reg] += mode;
+				by_byte(self.memory.read_l(temp), 0, mode)
+			}
+			4 => {
+				self.a[reg] -= mode;
+				let temp = self.a[reg];
+				by_byte(self.memory.read_l(temp), 0, mode)
+			}
+			5 => {
+				
+			}
+			
+		
+		}
+	}
 }
 
-fn by_byte(from: u32, to: u32, mode: u16) -> u32 {
+fn by_byte(from: u32, to: u32, mode: u8 -> u32 {
     match mode {
-        0b10 => return from,
-        0b01 => {
+        4 => return from, //long
+        2 => {
+			//word
             let temp = from & 0b00000000000000001111111111111111;
             let temp2 = to & 0b11111111111111110000000000000000;
             return temp + temp2;
         }
-        0b00 => {
+        1 => {
+			//byte
             let temp = from & 0b00000000000000000000000011111111;
             let temp2 = to & 0b11111111111111111111111100000000;
             return temp + temp2;
@@ -821,6 +887,7 @@ fn by_byte(from: u32, to: u32, mode: u16) -> u32 {
         _ => 0,
     }
 }
+
 
 pub fn debug_print(test: &M68k) {
     let mut i = 0;
@@ -866,17 +933,17 @@ impl Mem {
         }
     }
 
-    pub fn readb(&mut self, addr: usize) -> u8 {
+    pub fn read_b(&mut self, addr: usize) -> u8 {
         //The CPU leaves data in an array of u8s, and whatever needs to see
         //those values can request them here. This is a stopgap solution.
         self.m[addr]
     }
 
-    pub fn readw(&mut self, addr: usize) -> u16 {
+    pub fn read_w(&mut self, addr: usize) -> u16 {
         ((self.m[addr + 1] as u16) << 8) + (self.m[addr] as u16)
     }
 
-    pub fn readl(&mut self, addr: usize) -> u32 {
-        ((self.readw(addr + 2) as u32) << 16) + (self.readw(addr) as u32)
+    pub fn read_l(&mut self, addr: usize) -> u32 {
+        ((self.read_w(addr + 2) as u32) << 16) + (self.read_w(addr) as u32)
     }
 }
