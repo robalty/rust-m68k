@@ -1,0 +1,6 @@
+[package]
+name = "rust-m68k"
+version = "0.1.0"
+authors = ["Roland Ballinger <roland2@pdx.edu>"]
+
+[dependencies]
