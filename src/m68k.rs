@@ -72,7 +72,7 @@ impl M68k {
         if self.op == 0 {//NOP
             return true;
         }
-		match ((self.op >> 12) & 0xf {
+		match (self.op >> 12) & 0xf {
 			0 => {
 				//immediate operation
 				match (self.op >> 8) & 0xf {
@@ -88,30 +88,13 @@ impl M68k {
 							1 => self.bchgz(),
 							2 => self.bclrz(),
 							3 => self.bsetz(),
+							_ => {}
 						}
 					}
 					_ => {//only other immediate ops are the bit operations on a D reg and MOVEP
-						if((self.op >> 3) & 0b100111) == 0b100001 {//movep
-							let reg = ((self.op >> 9) & 0b111) as usize;
-							let areg = (self.op & 0b111) as usize; //what address to use
-							let addr = (self.next_op() as u32) + self.a[areg]; //the displacement to add
-							if self.op & 0b10000000 != 0 {//FROM memory, TO d reg
-								if self.op & 0b1000000 != 0 {//long
-									self.d[reg] = self.memory.read_l(addr);
-								}
-								else{//word
-									self.d[reg] = by_bytes(self.memory.read_w(addr) as u32, self.d[reg], 2);
-								}
-							}
-							else {//FROM d reg, TO memory
-								if self.op & 0b1000000 != 0 {//long
-									self.memory.mem_write(addr, self.d[reg], 4);
-								}
-								else {
-									self.memory.mem_write(addr, self.d[reg], 2);
-								}
-							}
-						} //end of MOVEP block 
+						if((self.op >> 3) & 0b100111) == 0b100001 {
+							self.movep();
+						} 
 						
 					
 					}
@@ -153,7 +136,7 @@ impl M68k {
 			0b1110 => {
 				//shifts and rotations
 			}
-		
+			_ => println!("i dunno what this is"),		
 		}
       
         return true;
@@ -164,52 +147,19 @@ impl M68k {
         let temp = self.next_op();
         if arg == 0x007c {
             //ori with SR
-            self.x = (((temp >> 4) & 0b1) != 0) | self.x;
-            self.n = (((temp >> 3) & 0b1) != 0) | self.n;
-            self.z = (((temp >> 2) & 0b1) != 0) | self.z;
-            self.v = (((temp >> 1) & 0b1) != 0) | self.v;
-            self.c = ((temp & 0b1) != 0) | self.c;
             return;
         }
-        self.v = false;
-        self.c = false;
         let reg: usize = (arg & 0b111) as usize;
+		let mode = 2_u32.pow(((arg >> 6) & 0b11) as u32);
         match (arg >> 3) & 0b111 {
             0 => {
                 //ori with d register
-                self.d[reg] = by_byte((self.d[reg] | temp as u32), self.d[reg], (arg >> 6) & 0b11);
-                match (arg >> 6) & 0b11 {
-                    0b00 => {
-                        //flags for byte
-                        let check = self.d[reg];
-                        self.z = (check & 0xff == 0);
-                        self.n = (check & 0x80 != 0);
-                    }
-                    0b01 => {
-                        //setting flags for word
-                        let check = self.d[reg];
-                        self.z = (check & 0xffff == 0);
-                        self.n = (check & 0x8000 != 0);
-                    }
-                    0b10 => {
-                        //setting flags for longword
-                        let check = self.d[reg];
-                        self.z = (check == 0);
-                        self.n = (check & 0x80000000 != 0);
-                    }
-                    _ => {}
-                }
-                self.v = false;
-                self.c = false;
+                self.d[reg] = by_byte((self.d[reg] | temp as u32), self.d[reg], mode);
             }
             0b111 => {
                 //ORI with memory
                 let temp2 = self.next_op();
-                self.d[reg] = by_byte(
-                    (temp as u32 | self.memory.read_l(temp2 as usize)),
-                    self.d[reg],
-                    (arg >> 6) & 0b11,
-                );
+                self.d[reg] = by_byte((temp as u32 | self.memory.read_l(temp2 as usize)), self.d[reg], mode);
             }
             _ => {}
         }
@@ -219,62 +169,55 @@ impl M68k {
         let arg = self.op;
         let temp = self.next_op();
         if arg == 0x027c {
-            self.x = (((temp >> 4) & 0b1) != 0) && self.x;
-            self.n = (((temp >> 3) & 0b1) != 0) && self.n;
-            self.z = (((temp >> 2) & 0b1) != 0) && self.z;
-            self.v = (((temp >> 1) & 0b1) != 0) && self.v;
-            self.c = ((temp & 0b1) != 0) && self.c;
+
             return;
         }
+		let mode = 2_u32.pow(((arg >> 6) & 0b11) as u32);
         let reg: usize = (arg & 0b111) as usize;
         match (arg >> 3) & 0b111 {
             0 => {
-                self.d[reg] = by_byte((self.d[reg] & temp as u32), self.d[reg], (arg >> 6) & 0b11);
+                self.d[reg] = by_byte((self.d[reg] & temp as u32), self.d[reg], mode);
             }
             0b111 => {
                 //andi with memory
                 let temp2 = self.next_op();
-                self.d[reg] = by_byte(
-                    (temp as u32 & self.memory.read_l(temp2 as usize)),
-                    self.d[reg],
-                    (arg >> 6) & 0b11,
-                );
+                self.d[reg] = by_byte((temp as u32 & self.memory.read_l(temp2 as usize)), self.d[reg], mode);
             }
             _ => {}
         }
     }
+	
     fn subi(&mut self) {
         let arg = self.op;
         let temp = self.next_op();
         let reg: usize = (arg & 0b111) as usize;
+		let mut mode = 0;
+		match (arg >> 6) & 0b11 {
+		0 => mode = 1,
+		1 => mode = 2,
+		2 => mode = 4,
+		_ => {}
+		}
         match (arg >> 3) & 0b111 {
             0 => {
                 let res =
-                    (self.d[reg] as i32 - (by_byte(temp as u32, 0, (arg >> 6) & 0b11) as i32));
-                self.n = res < 0;
-                self.z = res == 0;
-                self.v = res > self.d[reg] as i32;
-                self.c = self.v;
-                self.d[reg] = by_byte(res as u32, self.d[reg], (arg >> 6) & 0b11);
+                    (self.d[reg] as i32 - (by_byte(temp as u32, 0, mode) as i32));
+                self.d[reg] = by_byte(res as u32, self.d[reg], mode);
             }
             0b111 => {
                 //subi with memory
                 let temp2 = self.next_op();
-                let mut res = by_byte(self.memory.read_l(temp2 as usize), 0, arg >> 6);
+                let mut res = by_byte(self.memory.read_l(temp2 as usize), 0, mode);
                 res = (self.d[reg] as i32 - res as i32) as u32;
-                self.n = res < 0;
-                self.z = res == 0;
-                self.v = res > self.d[reg];
-                self.c = self.v;
-                self.d[reg] = by_byte(res, self.d[reg], (arg >> 6) & 0b11);
+                self.d[reg] = by_byte(res, self.d[reg], mode);
             }
             _ => {}
         }
     }
 	
 	fn btstz(&mut self){
-		let bitnum = self.next_op();
-		let reg = self.op & 0b111;
+		let bitnum = self.next_op() as u32;
+		let reg = (self.op & 0b111) as usize;
 		match (self.op >> 3) & 0b111 {//finding source
 			0 => {//data register
 				let mask = 2_u32.pow(bitnum % 32);
@@ -297,7 +240,7 @@ impl M68k {
 			2 => {//address from A reg
 				let mask = 2_u8.pow(bitnum % 7);
 				let addr = self.a[reg];
-				let temp = self.memory.read_b(addr);
+				let temp = self.memory.read_b(addr as usize);
 				if(temp & mask as u8) == 0 {
 					self.sr = self.sr | 0b000000000000000000100;
 				}
@@ -308,7 +251,7 @@ impl M68k {
 			3 => {//A(n) with increment
 				let mask = 2_u8.pow(bitnum % 7);
 				let addr = self.a[reg];
-				let temp = self.memory.read_b(addr);
+				let temp = self.memory.read_b(addr as usize);
 				if(temp & mask as u8) == 0 {
 					self.sr = self.sr | 0b000000000000000000100;
 				}
@@ -321,7 +264,7 @@ impl M68k {
 				let mask = 2_u8.pow(bitnum % 7);
 				self.a[reg] -= 1;
 				let addr = self.a[reg];
-				let temp = self.memory.read_b(addr);
+				let temp = self.memory.read_b(addr as usize);
 				if(temp & mask as u8) == 0 {
 					self.sr = self.sr | 0b000000000000000000100;
 				}
@@ -329,125 +272,263 @@ impl M68k {
 					self.sr = self.sr & 0b111111111111111111011;
 				}
 			}
-			5 =>
+			_ => println!("invalid addressing mode for BTSTZ")
 			
 		}
 	}
+	
 	fn bchgz(&mut self){
-		let bitnum = self.next_op() % 32;
-		let mask = 2_u32.pow(bitnum);
-		let reg = self.op & 0b111;
+		let bitnum = self.next_op() as u32;
+		let reg = (self.op & 0b111) as usize;
 		match (self.op >> 3) & 0b111 {//finding source
 			0 => {//data register
+				let mask = 2_u32.pow(bitnum % 32);
 				if(self.d[reg] & mask) == 0 {
 					self.sr = self.sr | 0b000000000000000000100;
 				}
 				else {
 					self.sr = self.sr & 0b111111111111111111011;
 				}
+				self.d[reg] = self.d[reg] ^ mask;
 			}
 			1 => {//A register
+				let mask = 2_u32.pow(bitnum % 32);
 				if(self.a[reg] & mask) == 0 {
 					self.sr = self.sr | 0b000000000000000000100;
 				}
 				else {
 					self.sr = self.sr & 0b111111111111111111011;
 				}
+				self.a[reg] = self.a[reg] ^ mask;
 			}
+			2 => {//address from A reg
+				let mask = 2_u8.pow(bitnum % 7);
+				let addr = self.a[reg];
+				let temp = self.memory.read_b(addr as usize);
+				if(temp & mask as u8) == 0 {
+					self.sr = self.sr | 0b000000000000000000100;
+				}
+				else {
+					self.sr = self.sr & 0b111111111111111111011;
+				}
+				self.memory.mem_write(addr as usize, (temp ^ mask) as u32, 1);
+			}
+			3 => {//A(n) with increment
+				let mask = 2_u8.pow(bitnum % 7);
+				let addr = self.a[reg];
+				let temp = self.memory.read_b(addr as usize);
+				if(temp & mask as u8) == 0 {
+					self.sr = self.sr | 0b000000000000000000100;
+				}
+				else {
+					self.sr = self.sr & 0b111111111111111111011;
+				}
+				self.memory.mem_write(addr as usize, (temp ^ mask)as u32, 1);
+				self.a[reg] += 1;
+			}
+			4 => {//A(n) with decrement
+				let mask = 2_u8.pow(bitnum % 7);
+				self.a[reg] -= 1;
+				let addr = self.a[reg];
+				let temp = self.memory.read_b(addr as usize);
+				if(temp & mask as u8) == 0 {
+					self.sr = self.sr | 0b000000000000000000100;
+				}
+				else {
+					self.sr = self.sr & 0b111111111111111111011;
+				}
+				self.memory.mem_write(addr as usize, (temp ^ mask)as u32, 1);
+			}
+			_ => {println!("invalid addressing mode for BCHGZ");}
+			
 		}
 	}
 	
 	fn bclrz(&mut self){
-		let bitnum = self.next_op() % 32;
-		let mask = 2_u32.pow(bitnum);
-		let reg = self.op & 0b111;
+		let bitnum = self.next_op() as u32;
+		let reg = (self.op & 0b111) as usize;
 		match (self.op >> 3) & 0b111 {//finding source
 			0 => {//data register
+				let mask = 2_u32.pow(bitnum % 32);
 				if(self.d[reg] & mask) == 0 {
 					self.sr = self.sr | 0b000000000000000000100;
 				}
 				else {
 					self.sr = self.sr & 0b111111111111111111011;
 				}
+				self.d[reg] = self.d[reg] & !mask;
 			}
 			1 => {//A register
+				let mask = 2_u32.pow(bitnum % 32);
 				if(self.a[reg] & mask) == 0 {
 					self.sr = self.sr | 0b000000000000000000100;
 				}
 				else {
 					self.sr = self.sr & 0b111111111111111111011;
 				}
+				self.a[reg] = self.a[reg] & (!mask as u32);
 			}
+			2 => {//address from A reg
+				let mask = 2_u8.pow(bitnum % 7);
+				let addr = self.a[reg];
+				let temp = self.memory.read_b(addr as usize);
+				if(temp & mask as u8) == 0 {
+					self.sr = self.sr | 0b000000000000000000100;
+				}
+				else {
+					self.sr = self.sr & 0b111111111111111111011;
+				}
+				self.memory.mem_write(addr as usize, (temp & !mask) as u32, 1);
+			}
+			3 => {//A(n) with increment
+				let mask = 2_u8.pow(bitnum % 7);
+				let addr = self.a[reg];
+				let temp = self.memory.read_b(addr as usize);
+				if(temp & mask as u8) == 0 {
+					self.sr = self.sr | 0b000000000000000000100;
+				}
+				else {
+					self.sr = self.sr & 0b111111111111111111011;
+				}
+				self.memory.mem_write(addr as usize, (temp & !mask)as u32, 1);
+				self.a[reg] += 1;
+			}
+			4 => {//A(n) with decrement
+				let mask = 2_u8.pow(bitnum % 7);
+				self.a[reg] -= 1;
+				let addr = self.a[reg];
+				let temp = self.memory.read_b(addr as usize);
+				if(temp & mask as u8) == 0 {
+					self.sr = self.sr | 0b000000000000000000100;
+				}
+				else {
+					self.sr = self.sr & 0b111111111111111111011;
+				}
+				self.memory.mem_write(addr as usize, (temp & !mask)as u32, 1);
+			}
+			_ => {println!("invalid addressing mode for BCLRZ");}
+		}
+		
+	}
+
+
+	fn bsetz(&mut self){
+		let bitnum = self.next_op() as u32;
+		let reg = (self.op & 0b111) as usize;
+		match (self.op >> 3) & 0b111 {//finding source
+			0 => {//data register
+				let mask = 2_u32.pow(bitnum % 32);
+				if(self.d[reg] & mask) == 0 {
+					self.sr = self.sr | 0b000000000000000000100;
+				}
+				else {
+					self.sr = self.sr & 0b111111111111111111011;
+				}
+				self.d[reg] = self.d[reg] | mask;
+			}
+			1 => {//A register
+				let mask = 2_u32.pow(bitnum % 32);
+				if(self.a[reg] & mask) == 0 {
+					self.sr = self.sr | 0b000000000000000000100;
+				}
+				else {
+					self.sr = self.sr & 0b111111111111111111011;
+				}
+				self.a[reg] = self.a[reg] | mask;
+			}
+			2 => {//address from A reg
+				let mask = 2_u8.pow(bitnum % 7);
+				let addr = self.a[reg];
+				let temp = self.memory.read_b(addr as usize);
+				if(temp & mask as u8) == 0 {
+					self.sr = self.sr | 0b000000000000000000100;
+				}
+				else {
+					self.sr = self.sr & 0b111111111111111111011;
+				}
+			}
+			3 => {//A(n) with increment
+				let mask = 2_u8.pow(bitnum % 7);
+				let addr = self.a[reg];
+				let temp = self.memory.read_b(addr as usize);
+				if(temp & mask as u8) == 0 {
+					self.sr = self.sr | 0b000000000000000000100;
+				}
+				else {
+					self.sr = self.sr & 0b111111111111111111011;
+				}
+				self.a[reg] += 1;
+			}
+			4 => {//A(n) with decrement
+				let mask = 2_u8.pow((bitnum % 7)as u32);
+				self.a[reg] -= 1;
+				let addr = self.a[reg];
+				let temp = self.memory.read_b(addr as usize);
+				if(temp & mask as u8) == 0 {
+					self.sr = self.sr | 0b000000000000000000100;
+				}
+				else {
+					self.sr = self.sr & 0b111111111111111111011;
+				}
+			}
+			_ => {println!("invalid addressing mode for op: BSETZ");}
+			
 		}
 	}
 	
-	fn bsetz(&mut self){
-		let bitnum = self.next_op() % 32;
-		let mask = 2_u32.pow(bitnum);
-		let reg = self.op & 0b111;
-		match (self.op >> 3) & 0b111 {//finding source
-			0 => {//data register
-				if(self.d[reg] & mask) == 0 {
-					self.sr = self.sr | 0b000000000000000000100;
-				}
-				else {
-					self.sr = self.sr & 0b111111111111111111011;
-				}
+	fn movep(&mut self){
+		let reg = ((self.op >> 9) & 0b111) as usize;
+		let areg = (self.op & 0b111) as usize; //what address to use
+		let addr = (self.next_op() as u32) + self.a[areg]; //the displacement to add
+		if self.op & 0b10000000 != 0 {//FROM memory, TO d reg
+			if self.op & 0b1000000 != 0 {//long
+				self.d[reg] = self.memory.read_l(addr as usize);
 			}
-			1 => {//A register
-				if(self.a[reg] & mask) == 0 {
-					self.sr = self.sr | 0b000000000000000000100;
-				}
-				else {
-					self.sr = self.sr & 0b111111111111111111011;
-				}
+			else{//word
+				self.d[reg] = by_byte(self.memory.read_w(addr as usize) as u32, self.d[reg], 2);
 			}
 		}
+		else {//FROM d reg, TO memory
+			if self.op & 0b1000000 != 0 {//long
+				self.memory.mem_write(addr as usize, self.d[reg], 4);
+			}
+			else {
+				self.memory.mem_write(addr as usize, self.d[reg], 2);
+			}
+		}
+	
 	}
 
     fn addi(&mut self) {
         let arg = self.op;
-        let temp = self.next_op();
+		let temp = self.next_op();
         let reg: usize = (arg & 0b111) as usize;
+		let mut mode = 0;
         match (arg >> 3) & 0b111 {
             0 => {
                 let res = (self.d[reg] as i32 + temp as i32);
                 match arg >> 6 & 0b11 {
                     0b00 => {
                         let check = (res & 0xff) as i8;
-                        self.v = res > 0xff;
-                        self.x = self.c;
-                        self.c = (res & 0x100) != 0;
-                        self.z = check == 0;
-                        self.n = check < 0;
+						mode = 1;
+						if(res > 0xff){ 
+							self.sr = self.sr | 1;
+							self.sr = self.sr | 0b10;
+							
+						}
                     }
                     0b01 => {
+						mode = 2;
                         let check = (res & 0xffff) as i16;
-                        self.c = (res & 0x10000) != 0;
-                        self.x = self.c;
-                        self.v = res > 0xffff;
-                        self.z = check == 0;
-                        self.n = check < 0;
                     }
                     0b10 => {
                         let check = (res < temp as i32) | (res < self.d[reg] as i32);
-                        self.c = check;
-                        self.v = check;
-                        self.x = check;
-                        self.z = res == 0;
-                        self.n = res < 0;
                     }
                     _ => {}
                 }
-                self.d[reg] = by_byte(res as u32, self.d[reg], (arg >> 6) & 0b11);
+                self.d[reg] = by_byte(res as u32, self.d[reg], mode);
             }
-            0b111 => {
-                let temp2 = self.next_op();
-                println!(
-                    "Should be doing addi with memory at {:x} and
-                the immediate number {:x}",
-                    temp2, temp
-                );
+            0b111 => {//fix this
             }
             _ => {}
         }
@@ -457,22 +538,18 @@ impl M68k {
         let arg = self.op;
         let temp = self.next_op();
         if arg == 0x0A7c {
-            self.x = (((temp >> 4) & 0b1) != 0) ^ self.x;
-            self.n = (((temp >> 3) & 0b1) != 0) ^ self.n;
-            self.z = (((temp >> 2) & 0b1) != 0) ^ self.z;
-            self.v = (((temp >> 1) & 0b1) != 0) ^ self.v;
-            self.c = ((temp & 0b1) != 0) ^ self.c;
             return;
         }
+		let mode = 2_u32.pow(((arg >> 6) & 0b11) as u32);
         let reg: usize = (arg & 0b111) as usize;
         match (arg >> 3) & 0b111 {
             0 => {
-                self.d[reg] = by_byte((self.d[reg] ^ temp as u32), self.d[reg], (arg >> 6) & 0b11);
+                self.d[reg] = by_byte((self.d[reg] ^ temp as u32), self.d[reg], mode);
             }
             0b111 => {
                 let temp2 = self.next_op();
                 let temp3 = self.memory.read_l(temp2 as usize) ^ (temp as u32);
-                self.memory.mem_write(temp2 as usize, temp3, 4);
+                self.memory.mem_write(temp2 as usize, temp3, mode);
             }
             _ => {}
         }
@@ -487,17 +564,17 @@ impl M68k {
 			// finding size of operation - mode is set according to the standard used by other ops
 			0 => { 
 			//byte
-			mode = 0b01;
+			mode = 1;
 			temp = self.next_op() as u32;
 			} 
 			0b01 => {
 			//word
-			mode = 0b11; 
+			mode = 2; 
 			temp = self.next_op() as u32;			
 			} 
 			0b10 => {
 			//long
-			mode = 0b10; 
+			mode = 4; 
 			temp = self.next_l();
 			} 
 			_ => {}
@@ -595,35 +672,12 @@ impl M68k {
         self.a[7] -= 4;
         self.memory.mem_write(self.a[7] as usize, self.pc, 4);
         self.a[7] -= 4;
-        let mut temp = 0;
-        if self.c {
-            temp += 0b1;
-        }
-        if self.v {
-            temp += 0b10;
-        }
-        if self.z {
-            temp += 0b100;
-        }
-        if self.n {
-            temp += 0b1000;
-        }
-        if self.x {
-            temp += 0b10000;
-        }
-        if self.s {
-            temp += 0x8000;
-        }
-        self.memory.mem_write(self.a[7] as usize, temp, 4);
+        self.memory.mem_write(self.a[7] as usize, self.sr as u32, 4);
     }
 
     fn stop(&mut self) {
-        if self.s == true {
-            self.x = false;
-            self.n = false;
-            self.z = false;
-            self.v = false;
-            self.c = false;
+        if self.sr & 0x8000 != 0 {
+			self.sr = 0;
             self.op = 0x007c;
             self.ori();
         } else {
@@ -656,21 +710,16 @@ impl M68k {
         let arg = self.op & 0b111;
         let temp = self.d[arg as usize].rotate_left(16);
         self.d[arg as usize] = temp;
-        self.n = (temp & 0x8000) != 0;
-        self.c = false;
-        self.z = temp != 0;
     }
 
     fn trap(&mut self) {
-        self.s = true;
+        self.sr = self.sr | 0x8000;
         let arg = self.op & 0xf;
         println!("Call to trap # {}", arg);
     }
 
     fn trapv(&mut self) {
-        if self.v {
-            self.trap();
-        }
+
     }
 
     fn jmp(&mut self) {
@@ -760,55 +809,51 @@ impl M68k {
                 self.memory.mem_write(self.a[7] as usize, self.pc, 4);
                 self.pc += offset as u32;
             }
-            0b0010 => if (!self.c && !self.z) {
+            0b0010 => if (self.sr & 0b101) == 0 {
                 self.pc += offset as u32;
             }, //bhi
-            0b0011 => if (self.c | self.z) {
+            0b0011 => if (self.sr & 0b101) != 0 {
                 self.pc += offset as u32;
             }, //bls
-            0b0100 => if !self.c {
+            0b0100 => if (self.sr & 1) == 0 {
                 self.pc += offset as u32;
             }, //bcc
-            0b0101 => if self.c {
+            0b0101 => if (self.sr & 1) != 0 {
                 self.pc += offset as u32;
             }, //bcs
-            0b0110 => if !self.z {
+            0b0110 => if (self.sr & 0b100) == 0 {
                 self.pc += offset as u32;
             }, //bne
-            0b0111 => if self.z {
+            0b0111 => if (self.sr & 0b100) != 0 {
                 self.pc += offset as u32;
             }, //beq
-            0b1000 => if !self.v {
+            0b1000 => if (self.sr & 0b10) == 0 {
                 self.pc += offset as u32;
             }, //bvc
-            0b1001 => if self.v {
+            0b1001 => if (self.sr & 0b10) != 0 {
                 self.pc += offset as u32;
             }, //bvs
-            0b1010 => if !self.n {
+            0b1010 => if (self.sr & 0b1000) == 0{
                 self.pc += offset as u32;
             }, //bpl
-            0b1011 => if self.n {
+            0b1011 => if (self.sr & 0b1000) != 0{
                 self.pc += offset as u32;
             }, //bmi
             0b1100 => {
-                if (self.n && self.v) | (!self.n && !self.v) {
+                if ((self.sr & 0b1100) != 0) || ((self.sr & 0b1010) == 0b1010){
                     self.pc += offset as u32;
                 }
             } //bge
             0b1101 => {
-                if (self.n && !self.v) | (!self.n && self.v) {
+                if ((self.sr & 0b1100) == 0){
                     self.pc += offset as u32;
                 }
             } //blt
             0b1110 => {
-                if (self.n && self.v && !self.z) | (!self.n && !self.v && !self.z) {
-                    self.pc += offset as u32;
-                }
+
             } //bgt
             0b1111 => {
-                if self.z | (self.n && !self.v) | (!self.n && self.v) {
-                    self.pc += offset as u32;
-                }
+
             } //ble
             _ => {
                 println!("If you're here you blew it! Opcode {}", arg);
@@ -836,40 +881,12 @@ impl M68k {
         println!("ls");
     }
 
-    fn next_l(&mut self, addr: usize) -> u32 {
+    fn next_l(&mut self) -> u32 {
         ((self.next_op() as u32) << 16) + (self.next_op() as u32)
     }
-	
-	fn finder(&mut self, opcode: u16, mode: u32) -> u32{
-		let reg = opcode & 0b111;
-		let src = (opcode >> 3) & 0b111;
-		match src {
-			0 => by_byte(self.d[reg], 0, mode)
-			1 => by_byte(self.a[reg], 0, mode)
-			2 => {
-				let temp = self.a[reg];
-				by_byte(self.memory.read_l(temp), 0, mode)
-			}
-			3 => {
-				let temp = self.a[reg];
-				self.a[reg] += mode;
-				by_byte(self.memory.read_l(temp), 0, mode)
-			}
-			4 => {
-				self.a[reg] -= mode;
-				let temp = self.a[reg];
-				by_byte(self.memory.read_l(temp), 0, mode)
-			}
-			5 => {
-				
-			}
-			
-		
-		}
-	}
 }
 
-fn by_byte(from: u32, to: u32, mode: u8 -> u32 {
+fn by_byte(from: u32, to: u32, mode: u32) -> u32 {
     match mode {
         4 => return from, //long
         2 => {
@@ -900,7 +917,7 @@ pub fn debug_print(test: &M68k) {
         println!("D{}: {:X}", i, x);
         i += 1;
     }
-    println!("xnzvc: {}{}{}{}{}", test.x, test.n, test.z, test.v, test.c);
+    println!("{}", test.sr);
 }
 
 pub struct Mem {
@@ -944,6 +961,6 @@ impl Mem {
     }
 
     pub fn read_l(&mut self, addr: usize) -> u32 {
-        ((self.read_w(addr + 2) as u32) << 16) + (self.read_w(addr) as u32)
+        ((self.read_w(addr + 2) as u32) << 16) + (self.read_w(addr as usize) as u32)
     }
 }
