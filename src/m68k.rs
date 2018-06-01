@@ -118,8 +118,7 @@ impl M68k {
 					op if (op & 0b111100000000) == 0b101000000000 => self.tst(),
 					op if (op & 0b111000000) == 0b111000000 => self.lea(),
 					op if (op & 0b111000000) == 0b110000000 => self.chk(),
-					
-					_
+					_ => {},
 				}
 			}
             0b0101 => {
@@ -974,7 +973,7 @@ pub fn debug_print(test: &M68k) {
         println!("D{}: {:X}", i, x);
         i += 1;
     }
-    println!("{:b}", test.sr);
+    println!("{:#018b}", test.sr);
 }
 
 pub struct Mem {
