@@ -71,8 +71,8 @@ impl M68k {
         println!("{}", self.pc);
         debug_print(&self);
         self.op = self.next_op();
-        if self.op == 0 {//ORs d[0] with 0 and consumes a long from the buffer
-            self.pc += 4;
+        if self.op == 0 {//ORs d[0] with 0 and consumes an imm from the buffer
+            self.pc += 2;
             return true;
         }
 		match (self.op >> 12) & 0xf {
@@ -86,28 +86,15 @@ impl M68k {
 					0b1010 => self.eori(),
 					0b1100 => self.cmpi(),
 					0b1000 => {
-						match (self.op >> 6) & 0b11 {//dest for these is the Z bit of the SR
-							0 => self.btstz(),
-							1 => self.bchgz(),
-							2 => self.bclrz(),
-							3 => self.bsetz(),
+						match (self.op >> 6) & 0b111 {//dest for these is the Z bit of the SR
+							0 => self.btst(),
+							1 => self.bchg(),
+							2 => self.bclr(),
+							3 => self.bset(),
 							_ => {}
 						}
 					}
-					_ => {//MOVEP
-						if((self.op >> 3) & 0b100111) == 0b100001 {
-							self.movep();
-						} 
-                        else {
-                            match (self.op >> 6) &0b111{
-                                0b100 | 0 => self.btst(),
-                                0b101 | 0b001 => self.bchg(),
-                                0b110 | 0b010 => self.bclr(),
-                                0b111 | 0b011=> self.bset(),
-                                _ => {}
-                            }
-                        }
-					}
+					_ => self.movep(), //this is the only other immediate op
 				}
 			}
 			0b0100 => {
@@ -125,13 +112,16 @@ impl M68k {
 					op if (op & 0b111111111000) == 0b111001011000 => self.unlk(),
 					op if (op & 0b111111110000) == 0b111001000000 => self.trap(),
 					op if (op & 0b111111000000) == 0b101011000000 => self.tas(),
-					op if (op & 0b101110000000) == 0b100010000000 => self.movem(),
-					op if (op & 0b111100000000) == 0b101000000000 => self.tst(),
 					op if (op & 0b111111000000) == 0b111010000000 => self.jsr(),
 					op if (op & 0b111111000000) == 0b111011000000 => self.jmp(),
+					op if (op & 0b101110000000) == 0b100010000000 => self.movem(),
+					op if (op & 0b111100000000) == 0b101000000000 => self.tst(),
 					op if (op & 0b111000000) == 0b111000000 => self.lea(),
 					op if (op & 0b111000000) == 0b110000000 => self.chk(),
-					}
+					
+					_
+				}
+			}
             0b0101 => {
                 if (self.op >> 6)&0b11 == 0b11 {
                     if (self.op >> 3) &0b111 == 0b001 {
@@ -260,7 +250,7 @@ impl M68k {
         }
     }
 	
-	fn btstz(&mut self){
+	fn btst(&mut self){
 		let bitnum = self.next_op() as u32;
 		let reg = (self.op & 0b111) as usize;
 		match (self.op >> 3) & 0b111 {//finding source
@@ -322,7 +312,7 @@ impl M68k {
 		}
 	}
 	
-	fn bchgz(&mut self){
+	fn bchg(&mut self){
 		let bitnum = self.next_op() as u32;
 		let reg = (self.op & 0b111) as usize;
 		match (self.op >> 3) & 0b111 {//finding source
@@ -389,7 +379,7 @@ impl M68k {
 		}
 	}
 	
-	fn bclrz(&mut self){
+	fn bclr(&mut self){
 		let bitnum = self.next_op() as u32;
 		let reg = (self.op & 0b111) as usize;
 		match (self.op >> 3) & 0b111 {//finding source
@@ -457,7 +447,7 @@ impl M68k {
 	}
 
 
-	fn bsetz(&mut self){
+	fn bset(&mut self){
 		let bitnum = self.next_op() as u32;
 		let reg = (self.op & 0b111) as usize;
 		match (self.op >> 3) & 0b111 {//finding source
@@ -521,6 +511,10 @@ impl M68k {
 		}
 	}
 	
+	fn chk(&mut self){
+	
+	}
+	
 	fn movep(&mut self){
 		let reg = ((self.op >> 9) & 0b111) as usize;
 		let areg = (self.op & 0b111) as usize; //what address to use
@@ -544,6 +538,10 @@ impl M68k {
 	
 	}
 
+	fn movem(&mut self){
+	
+	}
+	
     fn addi(&mut self) {
         let arg = self.op;
 		let temp = self.next_op();
