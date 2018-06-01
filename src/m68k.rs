@@ -100,10 +100,10 @@ impl M68k {
 						} 
                         else {
                             match (self.op >> 6) &0b111{
-                                0b100 => self.btstz(),
-                                0b101 => self.bchgz(),
-                                0b110 => self.bclrz(),
-                                0b111 => self.bsetz(),
+                                0b100 | 0 => self.btst(),
+                                0b101 | 0b001 => self.bchg(),
+                                0b110 | 0b010 => self.bclr(),
+                                0b111 | 0b011=> self.bset(),
                                 _ => {}
                             }
                         }
@@ -121,10 +121,18 @@ impl M68k {
                     0b0100111001110101 => self.rts(),
                     0b0100111001110110 => self.trapv(),
                     0b0100111001110111 => self.rtr(),
-                    _ => {println!("uncaptured misc opcode");}
-                }//there are more to match but i gotta figure out the rules
-			}
-            0b0101 =>{
+					op if (op & 0b111111111000) == 0b111001010000 => self.link(),
+					op if (op & 0b111111111000) == 0b111001011000 => self.unlk(),
+					op if (op & 0b111111110000) == 0b111001000000 => self.trap(),
+					op if (op & 0b111111000000) == 0b101011000000 => self.tas(),
+					op if (op & 0b101110000000) == 0b100010000000 => self.movem(),
+					op if (op & 0b111100000000) == 0b101000000000 => self.tst(),
+					op if (op & 0b111111000000) == 0b111010000000 => self.jsr(),
+					op if (op & 0b111111000000) == 0b111011000000 => self.jmp(),
+					op if (op & 0b111000000) == 0b111000000 => self.lea(),
+					op if (op & 0b111000000) == 0b110000000 => self.chk(),
+					}
+            0b0101 => {
                 if (self.op >> 6)&0b11 == 0b11 {
                     if (self.op >> 3) &0b111 == 0b001 {
                         self.bcc();
@@ -934,6 +942,7 @@ impl M68k {
     fn next_l(&mut self) -> u32 {
         ((self.next_op() as u32) << 16) + (self.next_op() as u32)
     }
+	
 }
 
 fn by_byte(from: u32, to: u32, mode: u32) -> u32 {
