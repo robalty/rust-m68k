@@ -6,7 +6,15 @@ mod m68k;
 fn main() {
     let mut params = env::args();
     params.next();
-    let file: File = File::open(&(params.next()).unwrap()).unwrap();
+    let f = params.next();
+    match f{
+        None => {
+            println!("Please provide the name of a binary file");
+            return;
+        }
+        _ => {}
+    }
+    let file: File = File::open(&(f).unwrap()).unwrap();
     let mut myCPU = m68k::M68k::init();
     myCPU.load(file);
     while (myCPU.run() == true) {}
